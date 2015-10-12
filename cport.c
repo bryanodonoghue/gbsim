@@ -22,6 +22,28 @@
 static char cport_rbuf[ES1_MSG_SIZE];
 static char cport_tbuf[ES1_MSG_SIZE];
 
+/*
+ * We (ab)use the operation-message header pad bytes to transfer the
+ * cport id in order to minimise overhead.
+ */
+static void
+gbsim_message_cport_pack(struct gb_operation_msg_hdr *header, uint16_t cport_id)
+{
+	header->pad[0] = cport_id;
+}
+
+/* Clear the pad bytes used for the CPort id */
+static void gbsim_message_cport_clear(struct gb_operation_msg_hdr *header)
+{
+	header->pad[0] = 0;
+}
+
+/* Extract the CPort id packed into the header, and clear it */
+static uint16_t gbsim_message_cport_unpack(struct gb_operation_msg_hdr *header)
+{
+	return (uint16_t)header->pad[0];
+}
+
 struct gbsim_cport *cport_find(uint16_t cport_id)
 {
 	struct gbsim_cport *cport;
@@ -142,21 +164,20 @@ static void get_protocol_operation(uint16_t cport_id, char **protocol,
 	}
 }
 
-static int send_msg_to_ap(struct op_msg *op, uint16_t hd_cport_id,
-			  uint16_t message_size, uint16_t id, uint8_t type,
-			  uint8_t result)
+static int send_msg_to_ap(uint16_t hd_cport_id,
+			struct op_msg *message, uint16_t message_size,
+			uint16_t operation_id, uint8_t type, uint8_t result)
 {
+	struct gb_operation_msg_hdr *header = &message->header;
 	char *protocol, *operation;
 	ssize_t nbytes;
 
-	op->header.size = htole16(message_size);
-	op->header.operation_id = id;
-	op->header.type = type;
-	op->header.result = result;
+	header->size = htole16(message_size);
+	header->operation_id = operation_id;
+	header->type = type;
+	header->result = result;
 
-	/* Store the cport id in the header pad bytes */
-	op->header.pad[0] = hd_cport_id & 0xff;
-	op->header.pad[1] = (hd_cport_id >> 8) & 0xff;
+	gbsim_message_cport_pack(header, hd_cport_id);
 
 	get_protocol_operation(hd_cport_id, &protocol, &operation,
 			       type & ~OP_RESPONSE);
@@ -169,66 +190,72 @@ static int send_msg_to_ap(struct op_msg *op, uint16_t hd_cport_id,
 
 	/* Send the response to the AP */
 	if (verbose)
-		gbsim_dump(op, message_size);
+		gbsim_dump(message, message_size);
 
-	nbytes = write(to_ap, op, message_size);
+	nbytes = write(to_ap, message, message_size);
 	if (nbytes < 0)
 		return nbytes;
 
 	return 0;
 }
 
-int send_response(struct op_msg *op, uint16_t hd_cport_id,
-		   uint16_t message_size, struct gb_operation_msg_hdr *oph,
-		   uint8_t result)
+int send_response(uint16_t hd_cport_id,
+			struct op_msg *message, uint16_t message_size,
+			uint16_t operation_id, uint8_t type, uint8_t result)
 {
-	return send_msg_to_ap(op, hd_cport_id, message_size, oph->operation_id,
-			oph->type | OP_RESPONSE, result);
+	return send_msg_to_ap(hd_cport_id, message, message_size,
+				operation_id, type | OP_RESPONSE, result);
 }
 
-int send_request(struct op_msg *op, uint16_t hd_cport_id,
-		 uint16_t message_size, uint16_t id, uint8_t type)
+int send_request(uint16_t hd_cport_id,
+			struct op_msg *message, uint16_t message_size,
+			uint16_t operation_id, uint8_t type)
 {
-	return send_msg_to_ap(op, hd_cport_id, message_size, id, type, 0);
+	return send_msg_to_ap(hd_cport_id, message, message_size,
+				operation_id, type, 0);
 }
 
 static int cport_recv_handler(struct gbsim_cport *cport,
-				void *rbuf, size_t rsize,
-				void *tbuf, size_t tsize)
+				void *rbuf, size_t rsize)
 {
+	void *tbuf = &cport_tbuf[0];
+	size_t tsize = sizeof(cport_tbuf);
+
+	memset(tbuf, 0, tsize);	/* Zero buffer before use */
+
 	switch (cport->protocol) {
 	case GREYBUS_PROTOCOL_CONTROL:
-		return control_handler(cport->id, cport->hd_cport_id, rbuf, rsize, tbuf, tsize);
+		return control_handler(cport, rbuf, rsize, tbuf, tsize);
 	case GREYBUS_PROTOCOL_SVC:
-		return svc_handler(cport->id, cport->hd_cport_id, rbuf, rsize, tbuf, tsize);
+		return svc_handler(cport, rbuf, rsize, tbuf, tsize);
 	case GREYBUS_PROTOCOL_GPIO:
-		return gpio_handler(cport->id, cport->hd_cport_id, rbuf, rsize, tbuf, tsize);
+		return gpio_handler(cport, rbuf, rsize, tbuf, tsize);
 	case GREYBUS_PROTOCOL_I2C:
-		return i2c_handler(cport->id, cport->hd_cport_id, rbuf, rsize, tbuf, tsize);
+		return i2c_handler(cport, rbuf, rsize, tbuf, tsize);
 	case GREYBUS_PROTOCOL_UART:
-		return uart_handler(cport->id, cport->hd_cport_id, rbuf, rsize, tbuf, tsize);
+		return uart_handler(cport, rbuf, rsize, tbuf, tsize);
 	case GREYBUS_PROTOCOL_PWM:
-		return pwm_handler(cport->id, cport->hd_cport_id, rbuf, rsize, tbuf, tsize);
+		return pwm_handler(cport, rbuf, rsize, tbuf, tsize);
 	case GREYBUS_PROTOCOL_SDIO:
-		return sdio_handler(cport->id, cport->hd_cport_id, rbuf, rsize, tbuf, tsize);
+		return sdio_handler(cport, rbuf, rsize, tbuf, tsize);
 	case GREYBUS_PROTOCOL_LIGHTS:
-		return lights_handler(cport->id, cport->hd_cport_id, rbuf, rsize, tbuf, tsize);
+		return lights_handler(cport, rbuf, rsize, tbuf, tsize);
 	case GREYBUS_PROTOCOL_I2S_MGMT:
-		return i2s_mgmt_handler(cport->id, cport->hd_cport_id, rbuf, rsize, tbuf, tsize);
+		return i2s_mgmt_handler(cport, rbuf, rsize, tbuf, tsize);
 	case GREYBUS_PROTOCOL_I2S_RECEIVER:
 	case GREYBUS_PROTOCOL_I2S_TRANSMITTER:
-		return i2s_data_handler(cport->id, cport->hd_cport_id, rbuf, rsize, tbuf, tsize);
+		return i2s_data_handler(cport, rbuf, rsize, tbuf, tsize);
 	case GREYBUS_PROTOCOL_LOOPBACK:
-		return loopback_handler(cport->id, cport->hd_cport_id, rbuf, rsize, tbuf, tsize);
+		return loopback_handler(cport, rbuf, rsize, tbuf, tsize);
 	case GREYBUS_PROTOCOL_FIRMWARE:
-		return firmware_handler(cport->id, cport->hd_cport_id, rbuf, rsize, tbuf, tsize);
+		return firmware_handler(cport, rbuf, rsize, tbuf, tsize);
 	default:
 		gbsim_error("handler not found for cport %u\n", cport->id);
 		return -EINVAL;
 	}
 }
 
-static void recv_handler(void *rbuf, size_t rsize, void *tbuf, size_t tsize)
+static void recv_handler(void *rbuf, size_t rsize)
 {
 	struct gb_operation_msg_hdr *hdr = rbuf;
 	uint16_t hd_cport_id;
@@ -242,7 +269,7 @@ static void recv_handler(void *rbuf, size_t rsize, void *tbuf, size_t tsize)
 	}
 
 	/* Retreive the cport id stored in the header pad bytes */
-	hd_cport_id = hdr->pad[1] << 8 | hdr->pad[0];
+	hd_cport_id = gbsim_message_cport_unpack(hdr);
 
 	cport = cport_find(hd_cport_id);
 	if (!cport) {
@@ -263,11 +290,9 @@ static void recv_handler(void *rbuf, size_t rsize, void *tbuf, size_t tsize)
 	if (verbose)
 		gbsim_dump(rbuf, rsize);
 
-	/* clear the cport id stored in the header pad bytes */
-	hdr->pad[0] = 0;
-	hdr->pad[1] = 0;
+	gbsim_message_cport_clear(hdr);
 
-	ret = cport_recv_handler(cport, rbuf, rsize, tbuf, tsize);
+	ret = cport_recv_handler(cport, rbuf, rsize);
 	if (ret)
 		gbsim_debug("cport_recv_handler() returned %d\n", ret);
 }
@@ -284,18 +309,20 @@ void recv_thread_cleanup(void *arg)
  */
 void *recv_thread(void *param)
 {
+	void *rbuf = &cport_rbuf[0];
+	size_t rbuf_size = sizeof(cport_rbuf);
+
 	while (1) {
 		ssize_t rsize;
 
-		rsize = read(from_ap, cport_rbuf, ES1_MSG_SIZE);
+		memset(rbuf, 0, rbuf_size);	/* Zero buffer before use */
+
+		rsize = read(from_ap, rbuf, rbuf_size);
 		if (rsize < 0) {
 			gbsim_error("error %zd receiving from AP\n", rsize);
 			return NULL;
 		}
 
-		recv_handler(cport_rbuf, rsize, cport_tbuf, sizeof(cport_tbuf));
-
-		memset(cport_rbuf, 0, sizeof(cport_rbuf));
-		memset(cport_tbuf, 0, sizeof(cport_tbuf));
+		recv_handler(rbuf, rsize);
 	}
 }

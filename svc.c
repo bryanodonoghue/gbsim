@@ -114,8 +114,9 @@ static int svc_handler_request(uint16_t cport_id, uint16_t hd_cport_id,
 	}
 
 	message_size += payload_size;
-	return send_response(op_rsp, hd_cport_id, message_size, oph,
-			     PROTOCOL_STATUS_SUCCESS);
+	return send_response(hd_cport_id, op_rsp, message_size,
+				oph->operation_id, oph->type,
+				PROTOCOL_STATUS_SUCCESS);
 }
 
 static int svc_handler_response(uint16_t cport_id, uint16_t hd_cport_id,
@@ -169,11 +170,13 @@ static int svc_handler_response(uint16_t cport_id, uint16_t hd_cport_id,
 	return 0;
 }
 
-int svc_handler(uint16_t cport_id, uint16_t hd_cport_id, void *rbuf,
+int svc_handler(struct gbsim_cport *cport, void *rbuf,
 		    size_t rsize, void *tbuf, size_t tsize)
 {
 	struct op_msg *op = rbuf;
 	struct gb_operation_msg_hdr *oph = &op->header;
+	uint16_t cport_id = cport->id;
+	uint16_t hd_cport_id = cport->hd_cport_id;
 
 	if (oph->type & OP_RESPONSE)
 		return svc_handler_response(cport_id, hd_cport_id, rbuf, rsize);
@@ -218,7 +221,7 @@ char *svc_get_operation(uint8_t type)
 
 int svc_request_send(uint8_t type, uint8_t intf_id)
 {
-	struct op_msg msg;
+	struct op_msg msg = { };
 	struct gb_operation_msg_hdr *oph = &msg.header;
 	struct gb_protocol_version_response *version_request;
 	struct gb_svc_hello_request *hello_request;
@@ -271,7 +274,7 @@ int svc_request_send(uint8_t type, uint8_t intf_id)
 	}
 
 	message_size += payload_size;
-	return send_request(&msg, GB_SVC_CPORT_ID, message_size, 1, type);
+	return send_request(GB_SVC_CPORT_ID, &msg, message_size, 1, type);
 }
 
 void svc_init(void)

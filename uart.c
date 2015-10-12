@@ -78,15 +78,15 @@ static pthread_barrier_t uart_barrier;
 /* Only used when bbb_backend is true */
 static int gb_uart_send(int i, void *tbuf, size_t tsize, __u8 type, __u8 flags)
 {
-	char uart_buf[GB_OPERATION_DATA_SIZE_MAX];
-	struct op_msg *op_req = (struct op_msg *)uart_buf;
+	char uart_buf[GB_OPERATION_DATA_SIZE_MAX] = { };
+	struct op_msg *msg = (struct op_msg *)uart_buf;
+	struct gb_operation_msg_hdr *oph = &msg->header;
 	size_t payload_size = 0;
-	uint16_t message_size;
+	uint16_t message_size = sizeof(*oph);
 	struct gb_uart_recv_data_request *rdr =
 		(struct gb_uart_recv_data_request *)(uart_buf + sizeof(struct gb_operation_msg_hdr));
 	struct gb_uart_serial_state_request *ssr =
 		(struct gb_uart_serial_state_request *)(uart_buf + sizeof(struct gb_operation_msg_hdr));
-	int ret;
 
 	switch (type) {
 	case GB_UART_TYPE_RECEIVE_DATA:
@@ -104,28 +104,11 @@ static int gb_uart_send(int i, void *tbuf, size_t tsize, __u8 type, __u8 flags)
 		return -EINVAL;
 
 	}
+	message_size += payload_size;
 
-	gbsim_debug("Module %hhu -> AP CPort %hu UART protocol unsol data\n",
-		    up[i].module_id, up[i].cport_id);
+	/* Operation id is 0 (unidirectional operation) */
 
-	/* Fill in the request header */
-	message_size = sizeof(struct gb_operation_msg_hdr) + payload_size;
-	op_req->header.size = htole16(message_size);
-	op_req->header.operation_id = 0;				/* Unidirectional */
-	op_req->header.type = type;
-
-	/* Store the cport id in the header pad bytes */
-	op_req->header.pad[0] = up[i].hd_cport_id & 0xff;
-	op_req->header.pad[1] = (up[i].hd_cport_id >> 8) & 0xff;
-
-	if (verbose) {
-		gbsim_debug("UART %s -> AP length %zu\n", up[i].name, tsize);
-		gbsim_dump(op_req, message_size);
-	}
-	ret = write(to_ap, op_req, message_size);
-	if (ret < 0)
-		return ret;
-	return 0;
+	return send_request(up[i].hd_cport_id, msg, message_size, 0, type);
 }
 
 static int tty_find_port(uint8_t module_id, uint16_t cport_id)
@@ -540,7 +523,7 @@ static int uart_init_port(uint8_t module_id, uint16_t cport_id,
 	return i;
 }
 
-int uart_handler(uint16_t cport_id, uint16_t hd_cport_id, void *rbuf,
+int uart_handler(struct gbsim_cport *cport, void *rbuf,
 		 size_t rsize, void *tbuf, size_t tsize)
 {
 	struct gb_operation_msg_hdr *oph;
@@ -548,6 +531,8 @@ int uart_handler(uint16_t cport_id, uint16_t hd_cport_id, void *rbuf,
 	struct op_msg *op_rsp;
 	size_t payload_size = 0;
 	uint16_t message_size;
+	uint16_t cport_id = cport->id;
+	uint16_t hd_cport_id = cport->hd_cport_id;
 	uint8_t module_id;
 	uint8_t result = PROTOCOL_STATUS_SUCCESS;
 	struct gb_uart_set_break_request *set_break;
@@ -607,7 +592,8 @@ int uart_handler(uint16_t cport_id, uint16_t hd_cport_id, void *rbuf,
 	}
 
 	message_size = sizeof(struct gb_operation_msg_hdr) + payload_size;
-	return send_response(op_rsp, hd_cport_id, message_size, oph, result);
+	return send_response(hd_cport_id, op_rsp, message_size,
+			oph->operation_id, oph->type, result);
 }
 
 /* Only used when bbb_backend is true */

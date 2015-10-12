@@ -47,7 +47,7 @@ char *firmware_get_operation(uint8_t type)
 /* Request from Module to AP */
 int firmware_request_send(uint8_t type, uint16_t hd_cport_id)
 {
-	struct op_msg msg;
+	struct op_msg msg = { };
 	struct gb_operation_msg_hdr *oph = &msg.header;
 	struct gb_firmware_size_request *size_request;
 	struct gb_firmware_get_firmware_request *get_fw_request;
@@ -77,7 +77,6 @@ int firmware_request_send(uint8_t type, uint16_t hd_cport_id)
 		payload_size = sizeof(*rbt_request);
 		rbt_request = &msg.fw_rbt_req;
 
-		rbt_request->stage = GB_FIRMWARE_BOOT_STAGE_ONE;
 		rbt_request->status = GB_FIRMWARE_BOOT_STATUS_SECURE;
 		break;
 	default:
@@ -87,7 +86,7 @@ int firmware_request_send(uint8_t type, uint16_t hd_cport_id)
 	}
 
 	message_size += payload_size;
-	return send_request(&msg, hd_cport_id, message_size, 1, type);
+	return send_request(hd_cport_id, &msg, message_size, 1, type);
 }
 
 /* Request from AP to Module */
@@ -122,8 +121,9 @@ static int firmware_handler_request(uint16_t cport_id, uint16_t hd_cport_id,
 	}
 
 	message_size += payload_size;
-	ret = send_response(op_rsp, hd_cport_id, message_size, oph,
-			    PROTOCOL_STATUS_SUCCESS);
+	ret = send_response(hd_cport_id, op_rsp, message_size,
+				oph->operation_id, oph->type,
+				PROTOCOL_STATUS_SUCCESS);
 	if (ret)
 		return ret;
 
@@ -232,11 +232,13 @@ static int firmware_handler_response(uint16_t cport_id, uint16_t hd_cport_id,
 	return ret;
 }
 
-int firmware_handler(uint16_t cport_id, uint16_t hd_cport_id, void *rbuf,
+int firmware_handler(struct gbsim_cport *cport, void *rbuf,
 		    size_t rsize, void *tbuf, size_t tsize)
 {
 	struct op_msg *op = rbuf;
 	struct gb_operation_msg_hdr *oph = &op->header;
+	uint16_t cport_id = cport->id;
+	uint16_t hd_cport_id = cport->hd_cport_id;
 
 	if (oph->type & OP_RESPONSE)
 		return firmware_handler_response(cport_id, hd_cport_id, rbuf, rsize);

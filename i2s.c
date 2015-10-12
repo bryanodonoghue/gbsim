@@ -23,7 +23,7 @@
 
 #define CONFIG_COUNT_MAX 20
 
-int i2s_mgmt_handler(uint16_t cport_id, uint16_t hd_cport_id, void *rbuf,
+int i2s_mgmt_handler(struct gbsim_cport *cport, void *rbuf,
 		     size_t rsize, void *tbuf, size_t tsize)
 {
 	struct gb_operation_msg_hdr *oph;
@@ -32,6 +32,7 @@ int i2s_mgmt_handler(uint16_t cport_id, uint16_t hd_cport_id, void *rbuf,
 	struct gb_i2s_mgmt_configuration *conf;
 	size_t payload_size;
 	uint16_t message_size;
+	uint16_t hd_cport_id = cport->hd_cport_id;
 	uint8_t result = PROTOCOL_STATUS_SUCCESS;
 
 	op_rsp = (struct op_msg *)tbuf;
@@ -88,11 +89,12 @@ int i2s_mgmt_handler(uint16_t cport_id, uint16_t hd_cport_id, void *rbuf,
 	}
 
 	message_size = sizeof(struct gb_operation_msg_hdr) + payload_size;
-	return send_response(op_rsp, hd_cport_id, message_size, oph, result);
+	return send_response(hd_cport_id, op_rsp, message_size,
+				oph->operation_id, oph->type, result);
 }
 
 
-int i2s_data_handler(uint16_t cport_id, uint16_t hd_cport_id, void *rbuf,
+int i2s_data_handler(struct gbsim_cport *cport, void *rbuf,
 		     size_t rsize, void *tbuf, size_t tsize)
 {
 	struct gb_operation_msg_hdr *oph;
@@ -100,6 +102,7 @@ int i2s_data_handler(uint16_t cport_id, uint16_t hd_cport_id, void *rbuf,
 	struct op_msg *op_rsp;
 	size_t payload_size;
 	uint16_t message_size;
+	uint16_t hd_cport_id = cport->hd_cport_id;
 	uint8_t result = PROTOCOL_STATUS_SUCCESS;
 
 	op_rsp = (struct op_msg *)tbuf;
@@ -120,7 +123,8 @@ int i2s_data_handler(uint16_t cport_id, uint16_t hd_cport_id, void *rbuf,
 	}
 
 	message_size = sizeof(struct gb_operation_msg_hdr) + payload_size;
-	return send_response(op_rsp, hd_cport_id, message_size, oph, result);
+	return send_response(hd_cport_id, op_rsp, message_size,
+			oph->operation_id, oph->type, result);
 }
 
 char *i2s_mgmt_get_operation(uint8_t type)

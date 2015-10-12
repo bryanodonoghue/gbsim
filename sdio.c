@@ -578,7 +578,7 @@ static ssize_t sdio_send_card_event(struct op_msg *op_req, uint16_t hd_cport_id,
 
 	op_req->sdio_event_req.event = event;
 
-	return send_request(op_req, hd_cport_id, message_size, 0,
+	return send_request(hd_cport_id, op_req, message_size, 0,
 			GB_SDIO_TYPE_EVENT);
 }
 
@@ -615,8 +615,9 @@ static ssize_t sdio_transfer_rsp(struct op_msg *op_rsp, uint16_t hd_cport_id,
 
 send:
 	message_size = sizeof(struct gb_operation_msg_hdr) + payload_size;
-	return send_response(op_rsp, hd_cport_id, message_size, oph,
-			     PROTOCOL_STATUS_SUCCESS);
+	return send_response(hd_cport_id, op_rsp, message_size,
+				oph->operation_id, oph->type,
+				PROTOCOL_STATUS_SUCCESS);
 }
 
 static ssize_t sdio_command_rsp(struct op_msg *op_rsp, uint16_t hd_cport_id,
@@ -629,11 +630,12 @@ static ssize_t sdio_command_rsp(struct op_msg *op_rsp, uint16_t hd_cport_id,
 	for (i = 0; i < 4; i++)
 		op_rsp->sdio_cmd_rsp.resp[i] = htole32(sd->rsp[i]);
 
-	return send_response(op_rsp, hd_cport_id, message_size, oph,
-			     PROTOCOL_STATUS_SUCCESS);
+	return send_response(hd_cport_id, op_rsp, message_size,
+				oph->operation_id, oph->type,
+				PROTOCOL_STATUS_SUCCESS);
 }
 
-int sdio_handler(uint16_t cport_id, uint16_t hd_cport_id, void *rbuf,
+int sdio_handler(struct gbsim_cport *cport, void *rbuf,
 		 size_t rsize, void *tbuf, size_t tsize)
 {
 	struct gb_operation_msg_hdr *oph;
@@ -641,6 +643,8 @@ int sdio_handler(uint16_t cport_id, uint16_t hd_cport_id, void *rbuf,
 	struct op_msg *op_rsp;
 	size_t payload_size = 0;
 	uint16_t message_size;
+	uint16_t cport_id = cport->id;
+	uint16_t hd_cport_id = cport->hd_cport_id;
 	uint16_t data_blocks;
 	uint16_t data_blksz;
 	uint8_t *data;
@@ -665,6 +669,8 @@ int sdio_handler(uint16_t cport_id, uint16_t hd_cport_id, void *rbuf,
 		payload_size = sizeof(struct gb_sdio_get_caps_response);
 		op_rsp->sdio_caps_rsp.caps = htole32(GB_SDIO_CAPS);
 		op_rsp->sdio_caps_rsp.ocr = htole32(GB_SDIO_OCR);
+		op_rsp->sdio_caps_rsp.f_min = htole32(400000);
+		op_rsp->sdio_caps_rsp.f_max = htole32(25000000);
 		op_rsp->sdio_caps_rsp.max_blk_count = htole16(1024);
 		op_rsp->sdio_caps_rsp.max_blk_size = htole16(1024);
 		gbsim_debug("Module %hhu -> AP CPort %hu SDIO protocol capabilities response\n  ",
@@ -701,7 +707,8 @@ int sdio_handler(uint16_t cport_id, uint16_t hd_cport_id, void *rbuf,
 	}
 
 	message_size = sizeof(struct gb_operation_msg_hdr) + payload_size;
-	send_response(op_rsp, hd_cport_id, message_size, oph, result);
+	send_response(hd_cport_id, op_rsp, message_size,
+				oph->operation_id, oph->type, result);
 
 	/* Simulate a card insert after sending capabilities */
 	if (oph->type == GB_SDIO_TYPE_GET_CAPABILITIES)
